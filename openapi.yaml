@@ -1,0 +1,373 @@
+openapi: 3.0.3
+info:
+  title: Movie Theater Payment API
+  description: |
+    This API enables the processing of payments for movie ticket reservations.
+    It allows customers to securely complete their purchases after selecting seats
+    and creates digital tickets upon successful payment confirmation.
+  version: 1.0.0
+  contact:
+    name: Movie Theater API Team
+    email: api@movietheater.example.com
+
+servers:
+  - url: https://api.movietheater.example.com/v1
+    description: Production server
+  - url: https://api-test.movietheater.example.com/v1
+    description: Test server
+
+paths:
+  /payments:
+    post:
+      summary: Create a new payment for a ticket reservation
+      description: |
+        Processes a payment transaction for a previously created ticket reservation.
+        Upon successful payment, digital tickets will be generated.
+      operationId: createPayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentRequest"
+      responses:
+        '201':
+          description: Payment processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResponse"
+        '400':
+          description: Invalid request (missing or invalid parameters)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '404':
+          description: Reservation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '409':
+          description: Reservation expired or conflict occurred
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReservationErrorResponse"
+
+  /payments/{paymentId}:
+    get:
+      summary: Retrieve payment information
+      description: Get details about a specific payment including its status and related tickets
+      operationId: getPayment
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          description: Unique identifier of the payment
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payment information retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentDetails"
+        '404':
+          description: Payment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    
+    delete:
+      summary: Cancel payment and request refund
+      description: |
+        Cancels a payment and initiates the refund process. 
+        Only available for payments within the cancellation window (typically 2 hours before showtime).
+      operationId: cancelPayment
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          description: Unique identifier of the payment
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payment cancellation and refund initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefundResponse"
+        '400':
+          description: Payment cannot be canceled (e.g., past cancellation window)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancellationErrorResponse"
+        '404':
+          description: Payment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '409':
+          description: Refund already in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefundInProgressResponse"
+
+components:
+  schemas:
+    PaymentRequest:
+      type: object
+      required:
+        - reservationId
+        - paymentMethod
+        - amount
+      properties:
+        reservationId:
+          type: string
+          format: uuid
+          description: Unique identifier for the ticket reservation
+        paymentMethod:
+          type: string
+          enum: [credit_card, debit_card, digital_wallet]
+          description: Payment method used for the transaction
+        amount:
+          type: number
+          format: float
+          description: Total payment amount
+        cardDetails:
+          type: object
+          description: Required when payment method is credit_card or debit_card
+          properties:
+            cardNumber:
+              type: string
+              description: Masked credit card number
+              example: "XXXX-XXXX-XXXX-1234"
+            expiryDate:
+              type: string
+              pattern: '^(0[1-9]|1[0-2])/[0-9]{2}$'
+              description: Card expiry date (MM/YY)
+              example: "12/25"
+            cardholderName:
+              type: string
+              description: Name of the cardholder
+            cvv:
+              type: string
+              description: Card verification value (not stored)
+        walletDetails:
+          type: object
+          description: Required when payment method is digital_wallet
+          properties:
+            walletType:
+              type: string
+              enum: [apple_pay, google_pay, paypal]
+              description: Type of digital wallet
+            walletToken:
+              type: string
+              description: Token representing the wallet payment
+        promoCode:
+          type: string
+          description: Optional promotion code for discounts
+
+    PaymentResponse:
+      type: object
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+          description: Unique identifier for the payment
+        status:
+          type: string
+          enum: [completed, pending]
+          description: Current status of the payment
+        transactionDate:
+          type: string
+          format: date-time
+          description: Date and time when the payment was processed
+        tickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ticket"
+        receiptUrl:
+          type: string
+          format: uri
+          description: URL to view and download the receipt
+
+    PaymentDetails:
+      type: object
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+          description: Unique identifier for the payment
+        reservationId:
+          type: string
+          format: uuid
+          description: Associated reservation identifier
+        status:
+          type: string
+          enum: [completed, pending, failed, refunded]
+          description: Current status of the payment
+        amount:
+          type: number
+          format: float
+          description: Total payment amount
+        paymentMethod:
+          type: string
+          enum: [credit_card, debit_card, digital_wallet]
+          description: Payment method used
+        maskedPaymentDetails:
+          type: string
+          description: Partially masked payment details (e.g., last 4 digits of card)
+        transactionDate:
+          type: string
+          format: date-time
+          description: Date and time when the payment was processed
+        tickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ticket"
+        receiptUrl:
+          type: string
+          format: uri
+          description: URL to view and download the receipt
+        showtime:
+          type: object
+          properties:
+            movie:
+              type: string
+              description: Movie title
+            theater:
+              type: string
+              description: Theater name
+            screen:
+              type: string
+              description: Screen number or name
+            startTime:
+              type: string
+              format: date-time
+              description: Showtime start time
+
+    Ticket:
+      type: object
+      properties:
+        ticketId:
+          type: string
+          format: uuid
+          description: Unique identifier for the ticket
+        seatLocation:
+          type: string
+          description: Seat identifier (e.g., "A12")
+        ticketType:
+          type: string
+          enum: [adult, child, senior, student]
+          description: Type of ticket purchased
+        qrCodeUrl:
+          type: string
+          format: uri
+          description: URL to the ticket QR code image
+
+    RefundResponse:
+      type: object
+      properties:
+        refundId:
+          type: string
+          format: uuid
+          description: Unique identifier for the refund
+        paymentId:
+          type: string
+          format: uuid
+          description: ID of the payment being refunded
+        status:
+          type: string
+          enum: [processing, completed]
+          description: Current status of the refund
+        refundAmount:
+          type: number
+          format: float
+          description: Amount being refunded
+        refundDate:
+          type: string
+          format: date-time
+          description: Date and time when the refund was initiated
+        estimatedCompletionTime:
+          type: string
+          format: date-time
+          description: Estimated date and time when refund will be completed
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        errorCode:
+          type: string
+          description: Error code for programmatic handling
+        timestamp:
+          type: string
+          format: date-time
+          description: Time when the error occurred
+
+    ReservationErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        errorCode:
+          type: string
+          description: Error code for programmatic handling
+        reservationStatus:
+          type: string
+          enum: [expired, unavailable, payment_in_progress]
+          description: Current status of the reservation
+        timestamp:
+          type: string
+          format: date-time
+          description: Time when the error occurred
+
+    CancellationErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        errorCode:
+          type: string
+          description: Error code for programmatic handling
+        reason:
+          type: string
+          enum: [past_cancellation_window, already_refunded, invalid_payment_status]
+          description: Reason why cancellation is not possible
+        showtime:
+          type: string
+          format: date-time
+          description: Movie showtime
+
+    RefundInProgressResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        errorCode:
+          type: string
+          description: Error code for programmatic handling
+        refundId:
+          type: string
+          format: uuid
+          description: ID of the existing refund process
+        refundStatus:
+          type: string
+          enum: [processing, completed]
+          description: Current status of the refund
